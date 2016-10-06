@@ -1,0 +1,3 @@
+// ----- MRLCOMM FUNCTION GENERATED INTERFACE BEGIN -----------
+<%=mrlcomm.defines%>
+// ----- MRLCOMM FUNCTION GENERATED INTERFACE END -----------

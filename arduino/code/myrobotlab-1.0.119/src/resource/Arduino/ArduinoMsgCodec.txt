@@ -1,0 +1,8 @@
+	/////// JAVA GENERATED DEFINITION BEGIN - DO NOT MODIFY //////
+	
+<%=java.defines%>
+	static {
+<%=java.bindings.init%>
+	}
+	///// JAVA GENERATED DEFINITION END - DO NOT MODIFY //////
+	

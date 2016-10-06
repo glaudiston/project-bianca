@@ -1,0 +1,605 @@
+
+<!--
+	Dependencies: git 
+	
+	proxy
+	-Dhttp.proxyHost=webproxy -Dhttp.proxyPort=80 -Dhttps.proxyHost=webproxy -Dhttps.proxyPort=80
+	curl -i  https://api.github.com/repos/MyRobotLab/myrobotlab/releases -H "Accept:application/vnd.github.manifold-preview+json"
+	curl -i  -x http://webproxy:80 https://api.github.com/repos/MyRobotLab/myrobotlab/releases -H "Accept:application/vnd.github.manifold-preview+json"
+	
+	The goal is always to make the build more simple :)
+	Currently the only dependencies come with the git clone are in the build directory.
+	
+	Build Type - Goals
+	min - local build - min distribution
+	test - junit and Incubator
+	
+	TODO - generate junit reports
+	http://stackoverflow.com/questions/12445582/generating-junit-reports-from-the-command-line
+	
+	TODO
+	Push notification from repository
+	curl http://yourserver/jenkins/git/notifyCommit?url=<URL of the Git repository>[&branches=branch1[,branch2]*][&sha1=<commit ID>]
+	
+	TODO test on multiple platforms Linux etc
+	TODO build native code with virtual vms - put in CI system
+	
+	TODO - list use cases - all need tags - v1.0.bn - testing - (incremental fast build)
+			use cases - (local only - no connectivity | post bleeding edge jar | post release.zip)
+			connectivity - dependencies (none all local | myrobotlab.org/buildnumber.php | github | proxy)
+			build types - [clean | simple | incremental]
+			uploads - push release - [ none | release myrobotlab.tag.jar | myrobotlab.tag.zip | both? | (local only)]
+			build location - [local | jenkins | travis]
+			tests [multi platform]
+	
+	TODO - dependencies
+			build - java 1.7
+			dist - git token environment variable
+	
+	
+	Jenkins Notes - 
+	Jenkins->Manage Jenkins->Manage Plugins->Advanced tab to set proxy - git client 
+	The git client will not follow global .gitconfig directives
+	Jenkins->Node->(master)->configure - configure ANT_HOME JAVA_HOME and PATH
+		
+	tasks
+	
+	FIXME - incremental build (no temp)
+	FIXME - need proxy support
+	FIXME - git hub release SHOULD NOT be created before compilation/distribution
+		
+	init
+	compile
+	dist
+	clean
+        test
+	report
+	mail
+	javadoc
+	
+	definitions
+	${version} 	= ${rev}.${DSTAMP}.${TSTAMP}
+	${tag} 	= "myrobotlab.${version}
+	
+	publishBleedingEdge
+	publishRelease
+	
+	JSON Urls
+	https://api.github.com/repos/MyRobotLab/myrobotlab
+	https://api.github.com/repos/MyRobotLab/myrobotlab/releases
+	https://api.github.com/repos/MyRobotLab/myrobotlab/contents/
+	https://api.github.com/repos/MyRobotLab/myrobotlab/git/trees/:sha
+	
+	repo
+	https://api.github.com/repos/MyRobotLab/repo
+	https://api.github.com/repos/MyRobotLab/repo/contents/:org/:module/:version
+	https://api.github.com/repos/MyRobotLab/repo/contents/com.google.gson/gson
+	
+	References:
+	-Dhttps.proxyHost=webproxy -Dhttps.proxyPort=80 -Dhttp.proxyHost=webproxy -Dhttp.proxyPort=80
+-->
+
+<!-- The MyRobotLab ant build.xml  -->
+<project name="myrobotlab" default="report" basedir=".">
+
+	<description>http://myrobotlab.org myrobotlab build file</description>
+
+	<!-- First thing is load the local properties -->
+	<property file="local.properties" />
+	<!-- load default build properties  -->
+	<property file="build.properties" />
+	<!-- backfill with the environment variables -->
+	<property environment="env" />
+	<!-- set the tag, if not already set in a local properties file -->
+	<property name="tag" value="${env.TRAVIS_TAG}" />
+	<echo message="env.TRAVIS_TAG=${env.TRAVIS_TAG}" />
+	<echo message="tag=${tag}" />
+
+	<!-- set global properties for this build -->
+
+	<property name="fs" location="${file.separator}" />
+	<!-- the source code for release -->
+	<property name="src" location="src" />
+	<!-- unit test source code -->
+	<property name="test" location="test" />
+	<!-- directory for the build to go into -->
+	<property name="build" location="build" />
+	<!-- location for the unit test reports to go into -->
+	<property name="report" location="build/report" />
+	<!-- directory for the distrbituion to go into -->
+	<property name="dist" location="dist" />
+	<available file="${build}/classes/resource/license" property="license.present" />
+	<property name="repo" location="../repo" />
+	<property name="resource.root" location="${build}/resource/root" />
+	<tstamp />
+
+	<!-- TODO: is this right? eek.. move contrib somewhere -->
+	<!-- Include the ant contrib task defs -->
+	<taskdef resource="net/sf/antcontrib/antcontrib.properties">
+		<classpath>
+			<pathelement location="build-lib/ant-contrib-0.6.jar" />
+		</classpath>
+	</taskdef>
+
+	<!-- FIXME - fixme with ivy -->
+	<path id="compile.classpath">
+		<pathelement location="bin" />
+		<pathelement location="${repo}/com.centralnexus.joystick/0.7/Joystick.jar" />
+		<pathelement location="${repo}/com.mxgraph.jgraph/1.6.1.2/jgraphx.jar" />
+		<pathelement location="${repo}/com.sun.java3d/1.5.1/j3dcore.jar" />
+		<pathelement location="${repo}/com.sun.java3d/1.5.1/j3dutils.jar" />
+		<pathelement location="${repo}/com.sun.java3d/1.5.1/vecmath.jar" />
+		<pathelement location="${repo}/com.sun.jna/3.2.2/jna.jar" />
+		<pathelement location="${repo}/com.sun.speech.freetts/1.2/freetts.jar" />
+		<pathelement location="${repo}/edu.cmu.sphinx/4-1.0beta6/batch.jar" />
+		<pathelement location="${repo}/edu.cmu.sphinx/4-1.0beta6/jsapi-1.0-base.jar" />
+		<pathelement location="${repo}/edu.cmu.sphinx/4-1.0beta6/sphinx4.jar" />
+		<pathelement location="${repo}/edu.cmu.sphinx/4-1.0beta6/tags.jar" />
+		<pathelement location="${repo}/edu.cmu.sphinx/4-1.0beta6/TIDIGITS_8gau_13dCep_16k_40mel_130Hz_6800Hz.jar" />
+		<pathelement location="${repo}/edu.cmu.sphinx/4-1.0beta6/WSJ_8gau_13dCep_16k_40mel_130Hz_6800Hz.jar" />
+		<pathelement location="${repo}/edu.cmu.sphinx/4-1.0beta6/WSJ_8gau_13dCep_8kHz_31mel_200Hz_3500Hz.jar" />
+		<pathelement location="${repo}/gnu.io.rxtx/2.1-7r2/RXTXcomm.jar" />
+		<pathelement location="${repo}/javaclient3.playerstage/3/javaclient3.jar" />
+		<pathelement location="${repo}/javaFlacEncoder.FLAC_FileEncoder/0.1/javaFlacEncoder-0.1.jar" />
+		<pathelement location="${repo}/javax.speech.recognition/1.0/jsapi.jar" />
+		<pathelement location="${repo}/javax.vecmath/1.5.1/vecmath.jar" />
+		<pathelement location="${repo}/javazoom.jl.player/1.0.1/jl1.0.1.jar" />
+		<pathelement location="${repo}/net.sourceforge.simbad/1.4/simbad-1.4.jar" />
+		<pathelement location="${repo}/org.apache.ivy/2.4.0-rc1/ivy-2.4.0-rc1.jar" />
+		<pathelement location="${repo}/org.apache.log4j/1.2.14/log4j-1.2.14.jar" />
+		<pathelement location="${repo}/org.jfugue.music/4.0.3/jfugue-4.0.3.jar" />
+		<pathelement location="${repo}/org.op.chess/1.0.0/ChessBoard.jar" />
+		<pathelement location="${repo}/org.python.core/2.5.2/jython.jar" />
+		<pathelement location="${repo}/org.tritonus.share.sampled.floatsamplebuffer/0.3.6/tritonus_share-0.3.6.jar" />
+		<pathelement location="${repo}/simbad.gui/1.4/simbad-1.4.jar" />
+		<pathelement location="${repo}/wiiuse.wiimote/0.12b/wiiusej.jar" />
+		<pathelement location="${repo}/org.slf4j/1.6.1/slf4j-log4j12-1.6.1.jar" />
+		<pathelement location="${repo}/org.slf4j/1.6.1/slf4j-api-1.6.1.jar" />
+		<pathelement location="${repo}/com.sun.mail/1.4.5/dsn.jar" />
+		<pathelement location="${repo}/com.sun.mail/1.4.5/imap.jar" />
+		<pathelement location="${repo}/com.sun.mail/1.4.5/mail.jar" />
+		<pathelement location="${repo}/com.sun.mail/1.4.5/mailapi.jar" />
+		<pathelement location="${repo}/com.sun.mail/1.4.5/pop3.jar" />
+		<pathelement location="${repo}/com.sun.mail/1.4.5/smtp.jar" />
+		<!-- pathelement location="${repo}/com.googlecode.colorutils/r9/colorutils.jar"/ -->
+		<pathelement location="${repo}/net.java.games.jinput/20120914/jinput.jar" />
+		<pathelement location="${repo}/org.fife.rsyntaxtextarea/2.0.4.1/rsyntaxtextarea.jar" />
+		<pathelement location="${repo}/org.fife.autocomplete/2.0.4/autocomplete.jar" />
+		<pathelement location="${repo}/com.googlecode.jssc/0.9.0/jssc.jar" />
+		<pathelement location="${repo}/com.googlecode.chatterbot/1.2.1/chatter-bot-api.jar" />
+		<pathelement location="${repo}/com.pi4j.pi4j/0.0.5/pi4j-core.jar" />
+		<pathelement location="${repo}/com.pi4j.pi4j/0.0.5/pi4j-gpio-extension.jar" />
+		<pathelement location="${repo}/it.sauronsoftware.cron4j/2.2.5/cron4j-2.2.5.jar" />
+		<pathelement location="${repo}/org.drjava.java/20120818/asm-3.1.jar" />
+		<pathelement location="${repo}/org.drjava.java/20120818/dynamicjava-base.jar" />
+		<pathelement location="${repo}/org.drjava.java/20120818/plt.jar" />
+		<pathelement location="${repo}/net.sourceforge.tess4j/1.1/tess4j.jar" />
+		<pathelement location="${repo}/org.apache.commons.httpclient/4.2.5/commons-codec-1.6.jar" />
+		<pathelement location="${repo}/org.apache.commons.httpclient/4.2.5/commons-logging-1.1.1.jar" />
+		<pathelement location="${repo}/org.apache.commons.httpclient/4.2.5/fluent-hc-4.2.5.jar" />
+		<pathelement location="${repo}/org.apache.commons.httpclient/4.2.5/httpclient-4.2.5.jar" />
+		<pathelement location="${repo}/org.apache.commons.httpclient/4.2.5/httpclient-cache-4.2.5.jar" />
+		<pathelement location="${repo}/org.apache.commons.httpclient/4.2.5/httpcore-4.2.4.jar" />
+		<pathelement location="${repo}/org.apache.commons.httpclient/4.2.5/httpmime-4.2.5.jar" />
+		<pathelement location="${repo}/com.wolfram.alpha/1.1/WolframAlpha-1.1.jar" />
+		<pathelement location="${repo}/com.strobel.decompiler/0.3.2/procyon-decompiler-0.3.2.jar" />
+		<pathelement location="${repo}/edu.northwestern.topcodes/1.0/topcodes.jar" />
+		<pathelement location="${repo}/org.simpleframework.xml/2.7/simple-xml-2.7.jar" />
+		<pathelement location="${repo}/org.jivesoftware.smack/3.3.0/smack.jar" />
+		<pathelement location="${repo}/com.google.gson/2.2.4/gson-2.2.4.jar" />
+        
+                <!-- Start JavaCV and OpenCV Libs --> 
+		<pathelement location="${repo}/org.bytedeco.javacv/0.10/javacpp.jar" />
+		<pathelement location="${repo}/org.bytedeco.javacv/0.10/javacv.jar" />
+		<pathelement location="${repo}/net.sourceforge.opencv/2.4.10/opencv.jar" />
+		<pathelement location="${repo}/net.sourceforge.opencv/2.4.10/opencv-android-arm.jar" />
+		<pathelement location="${repo}/net.sourceforge.opencv/2.4.10/opencv-android-x86.jar" />
+		<pathelement location="${repo}/net.sourceforge.opencv/2.4.10/opencv-linux-x86.jar" />
+		<pathelement location="${repo}/net.sourceforge.opencv/2.4.10/opencv-linux-x86_64.jar" />
+		<pathelement location="${repo}/net.sourceforge.opencv/2.4.10/opencv-macosx-x86_64.jar" />
+		<pathelement location="${repo}/net.sourceforge.opencv/2.4.10/opencv-windows-x86.jar" />
+		<pathelement location="${repo}/net.sourceforge.opencv/2.4.10/opencv-windows-x86_64.jar" />
+                <!-- End JavaCV and OpenCV -->
+
+		<pathelement location="${repo}/org.java_websocket.websocket/1.2/java_websocket.jar" />
+		<pathelement location="${repo}/org.twitter4j.twitter/3.0.5/twitter4j-async-3.0.5.jar" />
+		<pathelement location="${repo}/org.twitter4j.twitter/3.0.5/twitter4j-core-3.0.5.jar" />
+		<pathelement location="${repo}/org.twitter4j.twitter/3.0.5/twitter4j-examples-3.0.5.jar" />
+		<pathelement location="${repo}/org.twitter4j.twitter/3.0.5/twitter4j-media-support-3.0.5.jar" />
+		<pathelement location="${repo}/org.twitter4j.twitter/3.0.5/twitter4j-stream-3.0.5.jar" />
+		<pathelement location="${repo}/com.googlecode.simpleopenni/1.96/SimpleOpenNI.jar" />
+		<pathelement location="${repo}/io.netty/4.0.19/netty-all-4.0.19.Final.jar" />
+		<pathelement location="${repo}/org.saintandreas.jovr/0.3.2.4/jovr-0.3.2.4.jar" />
+		<pathelement location="${repo}/com.github.recognito/0.1.0/recognito-0.1.0-SNAPSHOT.jar" />
+		<pathelement location="${repo}/org.alicebot.ab/0.0.6.26/Ab.jar" />
+		<pathelement location="${repo}/com.leapmotion/2.1.3/LeapJava.jar" />
+		<pathelement location="${repo}/se.comhem.chess/1.1.2/cuckoo112.jar" />
+		<pathelement location="${repo}/javazoom.spi/1.9.5/mp3spi1.9.5.jar" />
+		<pathelement location="${repo}/org.apache.solr/4.10.2/noggit-0.5.jar" />
+		<pathelement location="${repo}/org.apache.solr/4.10.2/solr-solrj-4.10.2.jar" />
+		<pathelement location="${repo}/org.apache.solr/4.10.2/commons-io-2.3.jar" />
+		<pathelement location="${repo}/org.eclipse.paho/1.0/org.eclipse.paho.client.mqttv3_1.0.0.jar" />
+		<pathelement location="${repo}/org.junit/4.11/junit-4.11.jar" />
+		<pathelement location="${repo}/io.netty/3.10.0/netty-3.10.0.Final.jar" />
+		
+		<pathelement location="${repo}/org.atmosphere.nettosphere/2.3.0/nettosphere-assembly-2.3.0.jar" />
+		<pathelement location="${repo}/org.atmosphere.nettosphere/2.3.0/geronimo-servlet_3.0_spec-1.0.jar" />
+		<pathelement location="${repo}/org.atmosphere.nettosphere/2.3.0/javax.inject-1.jar" />
+		
+		<pathelement location="${repo}/org.bytedeco.ffmpeg/2.6.1/ffmpeg-2.6.1-1.0-20150502.231737-1-windows-x86_64.jar"/>
+		<pathelement location="${repo}/org.bytedeco.ffmpeg/2.6.1/ffmpeg-2.6.1-0.11.jar"/>
+
+		
+	</path>
+
+	<!-- additional jars required to compile unit tests -->
+	<path id="test.classpath">
+		<pathelement location="${repo}/org.apache.log4j/1.2.14/log4j-1.2.14.jar" />
+		<pathelement location="${repo}/org.slf4j/1.6.1/slf4j-log4j12-1.6.1.jar" />
+		<pathelement location="${repo}/org.slf4j/1.6.1/slf4j-api-1.6.1.jar" />
+		<pathelement location="${repo}/org.junit/4.11/junit-4.11.jar" />
+		<pathelement location="${repo}/org.junit/4.11/hamcrest-core-1.3.jar" />
+                <!-- TODO: why is the normal compile classpath omitted? -->
+		<pathelement location="${repo}/org.apache.solr/4.10.2/solr-solrj-4.10.2.jar" />
+		<!-- remove <path refid="compile.classpath" /> -->
+		<!-- remove <pathelement location="${build}/classes" /> -->
+	</path>
+
+
+	<condition property="foo.path" value="C:\Foo\Dir">
+		<os family="windows" />
+	</condition>
+	<condition property="foo.path" value="/home/foo/dir">
+		<os family="unix" />
+	</condition>
+
+	<fail unless="foo.path">No foo.path set for this OS!</fail>
+
+	<!-- ================ init begin ================= -->
+	<target name="init" depends="repoClone">
+		<echo message="compiling with ${ant.java.version}" />
+		<echoproperties />
+		<property name="XMLConstants.FEATURE_SECURE_PROCESSING" value="false" />
+
+		<!-- mail task properties -->
+		<property name="mail.host" value="smtp.gmail.com" />
+		<property name="mail.port" value="464" />
+		<property name="mail.subjectalert" value="Test build" />
+		<property name="mail.ssl" value="yes" />
+		<property name="mail.username" value="" />
+
+		<!-- get from local properties file -->
+		<property name="mail.password" value="" />
+		<!-- get from local properties file -->
+		<property name="mail.from" value="build@myrobotlab.org" />
+		<property name="mail.tolist" value="" />
+
+		<echoproperties />
+
+		<!-- TODO - get repo's comment -->
+
+		<echo message="date time ${DSTAMP}.${TSTAMP}" />
+		<property name="build.number" value="${env.BUILD_NUMBER}" />
+
+		<!-- git log -1 - -pretty=%B -->
+		<!-- FIXME - OOPS forgot about mrl pull ! only have repo !!! -->
+		<exec executable="git" dir="./" outputproperty="gitcomment">
+			<arg value="log" />
+			<arg value="-1" />
+			<arg value="--pretty=%B" />
+		</exec>
+
+		<!-- TODO you need to filter out brackets []{} -->
+		<propertyregex property="comment" input="${gitcomment}" regexp="\r|\n" replace=" " global="true" />
+		<echo message="Last commit comment [${comment}]" />
+		<!-- property name="comment" value="${DSTAMP}.${TSTAMP}" /-->
+		<!-- ============ tag end ================= -->
+
+		<!-- http://larrycai.wordpress.com/2013/02/22/publish-the-artifacts-inside-travis-ci-to-github/ -->
+		<property name="github.token" value="${env.GITHUB_TOKEN}" />
+		<!-- echo message="github.token ${env.GITHUB_TOKEN}" / -->
+
+		<!-- after_success:
+  		- git commit -a -m "Committed by Travis-CI build number: $TRAVIS_JOB_ID" 
+		-->
+
+		<!-- The tag determines the build number for the release... -->
+		<echo message="tag ${tag}" />
+
+		<!-- TODO set all subsequent directories or resources with appended tag -->
+		<!-- TODO branch on the tag in release -->
+		<property name="temp" location="${dist}/temp/${tag}" />
+
+		<!-- Create the build directory structure used by compile -->
+		<!-- create all necessary directories -->
+		<mkdir dir="${dist}" />
+		<mkdir dir="${dist}/archive" />
+		<!-- the build directory -->
+		<mkdir dir="${build}" />
+		<mkdir dir="${build}/classes" />
+		<mkdir dir="${build}/lib" />
+		<mkdir dir="${build}/test" />
+		<mkdir dir="${build}/report" />
+
+	</target>
+	<!-- ================ init end ================= -->
+
+
+	<!-- FIXME !!!- use ivy correctly ! -->
+	<!-- FIXME !!!- manage proxy for ivy -->
+	<!-- =============== repo begin  =============== -->
+	<!-- repo added if not already cloned - does update to head -->
+	<target name="repoCheck">
+		<available file="${repo}" property="repo.present" />
+
+		<!-- http://stackoverflow.com/questions/18097555/execute-ant-task-if-two-conditions-are-met -->
+		<condition property="git.pull">
+			<and>
+				<available file="${repo}" />
+				<istrue value="${network.available}" />
+			</and>
+		</condition>
+
+		<condition property="git.clone">
+			<and>
+				<not>
+					<available file="${repo}" />
+				</not>
+			</and>
+		</condition>
+
+	</target>
+	<target name="repoExists" depends="repoCheck" if="git.pull">
+		<echo message="git pull ${repo}" />
+		<echo message="${git.pull}" />
+		<exec executable="git" dir="${repo}">
+			<!-- <arg value="fetch"/> -->
+			<arg value="pull" />
+		</exec>
+	</target>
+	<target name="repoDoesNotExists" depends="repoCheck" if="git.clone">
+		<echo message="git clone https://github.com/MyRobotLab/repo.git ${repo}" />
+		<exec executable="git">
+			<arg value="clone" />
+			<arg value="https://github.com/MyRobotLab/repo.git" />
+			<arg value="${repo}" />
+		</exec>
+	</target>
+
+	<!-- TODO: Consider moving this ... and get rid of it , but it will require dep management -->
+	<target name="repoClone">
+		<echo message="git clone https://github.com/MyRobotLab/repo.git ${repo}" />
+		<exec executable="git">
+			<arg value="clone" />
+			<arg value="https://github.com/MyRobotLab/repo.git" />
+			<arg value="${repo}" />
+		</exec>
+	</target>
+	<!-- =============== repo end  =============== -->
+	<!-- TODO - work on removing these 3rd party dependencies -->
+	<target name="unzip" unless="${license.present}">
+		<echo>unzipping dependencies</echo>
+		<echo message="${license.present}" />
+
+		<unzip src="${repo}/com.google.gson/2.2.4/gson-2.2.4.jar" dest="${build}/classes" />
+		<unzip src="${repo}/org.apache.ivy/2.4.0-rc1/ivy-2.4.0-rc1.jar" dest="${build}/classes" />
+		<unzip src="${repo}/org.fife.rsyntaxtextarea/2.0.4.1/rsyntaxtextarea.jar" dest="${build}/classes" />
+		<unzip src="${repo}/org.fife.autocomplete/2.0.4/autocomplete.jar" dest="${build}/classes" />
+		<unzip src="${repo}/com.mxgraph.jgraph/1.6.1.2/jgraphx.jar" dest="${build}/classes" />
+		<unzip src="${repo}/org.apache.log4j/1.2.14/log4j-1.2.14.jar" dest="${build}/classes" />
+		<unzip src="${repo}/org.slf4j/1.6.1/slf4j-log4j12-1.6.1.jar" dest="${build}/classes" />
+		<unzip src="${repo}/org.slf4j/1.6.1/slf4j-api-1.6.1.jar" dest="${build}/classes" />
+
+	</target>
+
+	<!-- Compile target, compile all myrobotlab src files -->
+	<target name="compile" depends="init,unzip" description="compile the source ">
+
+		<echo>compile start</echo>
+		<!-- compile the java code from ${src} into ${build} -->
+		<javac srcdir="${src}" destdir="${build}/classes" debug="true" includeantruntime="false">
+			<exclude name="org/myrobotlab/service/Android.java" />
+			<exclude name="org/myrobotlab/service/SEAR.java" />
+			<exclude name="org/myrobotlab/control/SEARGUI.java" />
+			<exclude name="org/myrobotlab/service/ArduinoBT.java" />
+			<classpath refid="compile.classpath" />
+		</javac>
+		<echo>compile end</echo>
+	</target>
+
+	<!-- create the onejar jar file for myrobotlab so it's one clicky worky for java execution -->
+	<target name="jar" depends="compile" description="create the myrobotlab.jar file">
+		<!-- FIXME - use Ivy to get the files there ! filebase or url resolver -->
+		<!-- copy resource.root -->
+		<copy todir="${build}/classes/resource">
+			<fileset dir="${src}/resource" />
+		</copy>
+		<echo file="${build}/classes/resource/version.txt">${tag}</echo>
+		<!-- copy the latest serviceData.xml into package -->
+		<!-- TODO deprecate the xml -->
+		<copy file="${repo}/serviceData.xml" todir="${build}/classes/resource/framework" />
+		<copy file="${repo}/serviceData.json" todir="${build}/classes/resource/framework" />
+
+		<jar jarfile="${build}/lib/myrobotlab.jar" basedir="${build}/classes">
+			<!-- excludes="org/myrobotlab/boot/" -->
+			<manifest>
+				<attribute name="Main-Class" value="org.myrobotlab.service.Agent" />
+				<attribute name="Built-By" value="${user.name}" />
+				<!-- section name="myrobotlab" -->
+				<section name="compile">
+					<attribute name="Specification-Title" value="myrobotlab" />
+					<attribute name="Specification-Version" value="${tag}" />
+					<attribute name="Specification-Vendor" value="myrobotlab" />
+					<attribute name="Implementation-Title" value="myrobotlab" />
+					<attribute name="Implementation-Version" value="${tag}" />
+					<attribute name="Implementation-Vendor" value="myrobotlab.org" />
+				</section>
+			</manifest>
+		</jar>
+	</target>
+
+	<!-- compile the unit tests prior to running them. -->
+	<target name="compiletests" depends="compile" description="compile the test source ">
+		<echo>compile tests start</echo>
+		<javac srcdir="test" destdir="build/test" debug="true" includeantruntime="false">
+			<classpath>
+				<path refid="test.classpath" />
+				<pathelement location="${build}/classes" />
+			</classpath>
+		</javac>
+		<echo>compile tests end</echo>
+	</target>
+
+	<!-- FYI - HTTP STATUS 422 - MEANS YOU ALREADY HAVE THAT RELEASE MADE !!! -->
+	<target name="createGitHubRelease" depends="init">
+		<echo message="token = ${github.token}" />
+		<echo message="{&quot;tag_name&quot;: &quot;${tag}&quot;,&quot;target_commitish&quot;: &quot;master&quot;,&quot;name&quot;: &quot;${tag}&quot;,&quot;body&quot;: &quot;${comment}&quot;,&quot;draft&quot;: false,&quot;prerelease&quot;: false}" />
+
+		<http method="POST" url="https://api.github.com/repos/MyRobotLab/myrobotlab/releases" expected="201" printresponseheaders="true" printrequestheaders="true" printresponse="true" entityProperty="release.response">
+			<headers>
+				<header name="Authorization" value="token ${github.token}" />
+			</headers>
+			<entity value="{&quot;tag_name&quot;: &quot;${tag}&quot;,&quot;target_commitish&quot;: &quot;master&quot;,&quot;name&quot;: &quot;${tag}&quot;,&quot;body&quot;: &quot;${comment}&quot;,&quot;draft&quot;: false,&quot;prerelease&quot;: false}">
+			</entity>
+		</http>
+		<echo message="${release.response}" />
+	</target>
+
+	<target name="getAssetsURL" depends="createGitHubRelease">
+		<propertyregex property="upload_url" input="${release.response}" regexp="(?&lt;=upload_url&quot;:&quot;)(.*)(?=\{\?name\})" select="\1" />
+		<echo message="${upload_url}" />
+	</target>
+
+	<target name="release" depends="compile, getAssetsURL">
+		<echo message="creating tag" />
+		<http method="POST" url="${upload_url}" printresponseheaders="false" printrequestheaders="false" printresponse="false" expected="201">
+			<!-- http method="POST" url="http://localhost:7979/repos/MyRobotLab/myrobotlab/releases" -->
+			<headers>
+				<header name="Authorization" value="token ${github.token}" />
+				<header name="Accept" value="application/vnd.github.manifold-preview" />
+				<header name="Content-Type" value="application/java-archive" />
+			</headers>
+			<query>
+				<parameter name="name" value="myrobotlab.jar" />
+			</query>
+			<entity file="${dist}/myrobotlab.jar" binary="true" />
+		</http>
+	</target>
+	<!-- TODO: make this depend on test , gotta figure out why travis ci is failing on this now. -->
+	<target name="dist" depends="jar" description="generate the distribution">
+		<copy file="${build}/lib/myrobotlab.jar" tofile="${dist}/archive/myrobotlab.${tag}.jar" />
+		<!-- backwards compat .. TODO: review this.. -->
+		<copy file="${build}/lib/myrobotlab.jar" tofile="${dist}/myrobotlab.jar" />
+		<!-- for convienence of debugging spawn -->
+		<copy file="${build}/lib/myrobotlab.jar" tofile="myrobotlab.jar" />
+	</target>
+
+	<target name="clean" description="clean up">
+		<!-- Delete the ${build} and ${temp} directory trees -->
+		<delete dir="${build}" />
+		<delete dir="${temp}" />
+	</target>
+
+	<target name="report" depends="test">
+		<junitreport todir="${report}">
+			<fileset dir="${report}" includes="TEST-*.xml" />
+			<report todir="${report}" format="noframes">
+			</report>
+		</junitreport>
+	</target>
+
+	<target name="mail" depends="report">
+		<mail mailhost="${mail.host}" mailport="${mail.port}" subject="${mail.subjectalert}" ssl="${mail.ssl}" user="${mail.username}" password="${mail.password}" tolist="${mail.tolist}">
+			<from address="${mail.from}" />
+			<!--  <to address="${mail.to}"/> -->
+			<message>The nightly build has completed</message>
+			<attachments>
+				<fileset dir="${report}">
+					<include name="**/*.html" />
+				</fileset>
+			</attachments>
+		</mail>
+	</target>
+
+	<target name="javadoc" depends="compile">
+		<javadoc access="public" packagenames="org.myrobotlab.*" author="true" destdir="javadoc" doctitle="myrobotlab" nodeprecated="false" nodeprecatedlist="false" noindex="false" nonavbar="false" notree="false" source="1.7" sourcepath="src" splitindex="true" use="true" version="true">
+			<arg value="-notimestamp" />
+			<classpath refid="compile.classpath" />
+		</javadoc>
+	</target>
+
+	<!-- TODO - upload/publish javadoc -->
+
+	<target name="test" depends="compiletests, dist">
+		<junit printsummary="withOutAndErr" fork="true" haltonfailure="yes">
+			<!--
+			<jvmarg value="-Djava.library.path=${dist}/libraries/native"/>
+			<env key="LD_LIBRARY_PATH" path="${dist}/libraries/native"/>			
+			-->
+
+			<!--			
+			FIXME - OS NEEDS TO BE TAKEN OUT OF PATH !!!!!
+			So we can do this
+			<jvmarg value="-Djava.library.path=libraries/native"/>
+			and not this !!!
+			<jvmarg value="-Djava.library.path=libraries/native/x86.64.windows"/>
+			so we don't have to exclude SerialTest !
+			-->
+			<sysproperty key="java.awt.headless" value="true" />
+			<!-- any junit tests would fail running on jenkins with gui components -->
+			<classpath>
+				<!-- <pathelement location="${dist}/myrobotlab.jar" /> FIXME - it needs to be this -->
+				<pathelement location="${build}/classes" />
+				<pathelement location="${build}/test" />
+				<path refid="test.classpath" />
+				<path refid="compile.classpath" />
+				<!-- remove <path refid="compile.classpath" /> -->
+				<!-- remove <pathelement location="${build}/classes" /> -->
+			</classpath>
+			<formatter type="xml" />
+
+			<batchtest fork="yes" todir="${build}/report">
+				<fileset dir="${test}">
+					<include name="**/*Test.java" />
+					<!-- exclude name="**/SerialTest.java" / -->
+				</fileset>
+			</batchtest>
+
+		</junit>
+	</target>
+
+	<!-- Incubator -->
+	<!-- In order to simulate a working deployment
+		the repo should be clean
+		dist/libraries/jar should only contain the minimal amount of jars
+		the load from the repo needs to occur BEFORE the test !!! - this means 2 execs are need
+		first one to clean and then deploy the Service's dependencies
+		second one to preform the test
+		
+		* clean repo - (includes serviceData.xml | .myrobotlab)
+		* clean libraries/* - with the exception of Bootstrap jars (copy over after full delete)
+		* request repo pull of dependencies for the service in question
+	-->
+
+	<target name="exec" depends="dist">
+		<!-- depends="dist"-->
+		<java classname="org.myrobotlab.service.Incubator" fork="true" failonerror="true">
+			<!-- it should be jar="${dist}/myrobotlab.jar" in all its complexity -->
+			<!-- <arg value="-h" /> -->
+			<jvmarg value="-Djava.library.path=${build}${fs}libraries${fs}native" />
+			<!-- <jvmarg value="-cp ${dist}/myrobotlab.jar;${dist}/libraries/jar/*;"/> -->
+			<env key="LD_LIBRARY_PATH" path="${build}${fs}libraries${fs}native" />
+			<classpath>
+				<fileset dir="${dist}/libraries/jar">
+					<include name="**/*.jar" />
+				</fileset>
+				<pathelement location="${dist}/myrobotlab.jar" />
+				<!-- FIXME - the jar should be executed - problem with 205 INFO terminating - good luck new bootstrap :) -->
+				<path refid="test.classpath" />
+				<!-- remove <path refid="compile.classpath" /> -->
+				<!-- remove <pathelement location="${build}/classes" /> -->
+			</classpath>
+		</java>
+	</target>
+
+</project>
